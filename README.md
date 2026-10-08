@@ -37,3 +37,7 @@ This builds a universal app, copies it to `~/Applications/ScrollFlip.app`, and r
 ```
 
 Stops the app, removes the LaunchAgent and app, and resets its Accessibility permission.
+
+## License
+
+Copyright 2026 Xin Ding. Licensed under the [Apache License, Version 2.0](LICENSE).
