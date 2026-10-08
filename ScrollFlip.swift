@@ -24,13 +24,10 @@ let agentURL = home.appendingPathComponent("Library/LaunchAgents/\(agentLabel).p
 let showIconNotification = Notification.Name("\(agentLabel).showIcon")
 let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
 
+// O_APPEND so a second copy's lines (e.g. "already running") don't get overwritten.
 let logFile: FileHandle? = {
-    if !FileManager.default.fileExists(atPath: logURL.path) {
-        FileManager.default.createFile(atPath: logURL.path, contents: nil)
-    }
-    let handle = try? FileHandle(forWritingTo: logURL)
-    handle?.seekToEndOfFile()
-    return handle
+    let fd = open(logURL.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
+    return fd < 0 ? nil : FileHandle(fileDescriptor: fd, closeOnDealloc: true)
 }()
 let timestamp = ISO8601DateFormatter()
 
