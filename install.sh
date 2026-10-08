@@ -5,13 +5,13 @@ set -eu
 cd "$(dirname "$0")"
 [ -d build/ScrollFlip.app ] || ./build.sh
 
-LABEL=local.scrollflip
+LABEL=io.github.xinding33.scrollflip
 APP="$HOME/Applications/ScrollFlip.app"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
 rm -rf "$APP"
 cp -R build/ScrollFlip.app "$APP"
 
@@ -35,8 +35,6 @@ cat > "$PLIST" <<PLIST
     </dict>
     <key>ProcessType</key>
     <string>Interactive</string>
-    <key>StandardErrorPath</key>
-    <string>$HOME/Library/Logs/ScrollFlip.log</string>
 </dict>
 </plist>
 PLIST

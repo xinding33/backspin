@@ -17,9 +17,21 @@ var tap: CFMachPort?
 let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/ScrollFlip.log")
 let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
 
+let logFile: FileHandle? = {
+    if !FileManager.default.fileExists(atPath: logURL.path) {
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+    }
+    let handle = try? FileHandle(forWritingTo: logURL)
+    handle?.seekToEndOfFile()
+    return handle
+}()
+let timestamp = ISO8601DateFormatter()
+
+/// Appends to ~/Library/Logs/ScrollFlip.log, and echoes to the terminal when run from one.
 func log(_ message: String) {
-    let stamp = ISO8601DateFormatter().string(from: Date())
-    FileHandle.standardError.write("\(stamp) \(message)\n".data(using: .utf8)!)
+    let line = "\(timestamp.string(from: Date())) \(message)\n".data(using: .utf8)!
+    logFile?.write(line)
+    if isatty(STDERR_FILENO) != 0 { FileHandle.standardError.write(line) }
 }
 
 func flip(_ event: CGEvent) {

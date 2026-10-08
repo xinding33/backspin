@@ -14,15 +14,35 @@ Known limitation: mice that emit continuous scroll events (e.g. Logitech mice wi
 
 ## Install
 
-Requires macOS 13+ and the Xcode command line tools.
+Requires macOS 13+. Both methods build ScrollFlip on your Mac, so there's no Gatekeeper warning. (Signed and notarized downloads are planned; see [#1](https://github.com/xinding33/scrollflip/issues/1).)
+
+### Homebrew
 
 ```sh
+brew install xinding33/tap/scrollflip
+brew services start scrollflip
+```
+
+Grant ScrollFlip Accessibility access when prompted (System Settings → Privacy & Security → Accessibility), and keep Natural scrolling on. It starts working as soon as permission is granted, and starts at login from then on.
+
+Because these builds aren't signed with a Developer ID, macOS treats each upgrade as a new app and asks for Accessibility permission again. After `brew upgrade scrollflip`, clear the old entry and restart:
+
+```sh
+tccutil reset Accessibility io.github.xinding33.scrollflip
+brew services restart scrollflip
+```
+
+### From source
+
+Requires the Xcode command line tools.
+
+```sh
+git clone https://github.com/xinding33/scrollflip.git
+cd scrollflip
 ./install.sh
 ```
 
-This builds a universal app, copies it to `~/Applications/ScrollFlip.app`, and registers a LaunchAgent so it starts at login (and relaunches if it crashes). Grant it Accessibility access when prompted (System Settings → Privacy & Security → Accessibility); it starts working as soon as you do.
-
-`build.sh` signs with your Apple Development certificate if you have one, so the Accessibility permission survives rebuilds. Otherwise it signs ad-hoc and you'll need to re-grant permission after each rebuild.
+This builds a universal app, copies it to `~/Applications/ScrollFlip.app`, and registers a LaunchAgent so it starts at login (and relaunches if it crashes). `build.sh` signs with your Apple Development certificate if you have one, so the Accessibility permission survives rebuilds; otherwise it signs ad-hoc and you'll need to re-grant permission after each rebuild.
 
 ## Menu
 
@@ -31,6 +51,16 @@ This builds a universal app, copies it to `~/Applications/ScrollFlip.app`, and r
 - **Show Log**, **Restart**, **Quit** (stays quit until next login)
 
 ## Uninstall
+
+Homebrew:
+
+```sh
+brew services stop scrollflip
+brew uninstall scrollflip
+tccutil reset Accessibility io.github.xinding33.scrollflip
+```
+
+From source:
 
 ```sh
 ./uninstall.sh
