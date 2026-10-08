@@ -25,11 +25,7 @@ open "$(brew --prefix)/opt/scrollflip/ScrollFlip.app"
 
 Grant ScrollFlip Accessibility access when prompted (System Settings → Privacy & Security → Accessibility), and keep Natural scrolling on. It starts working as soon as permission is granted. Then choose **Start at Login** from its menu bar icon.
 
-Because these builds aren't signed with a Developer ID, macOS treats each upgrade as a new app and asks for Accessibility permission again. After `brew upgrade scrollflip`, clear the old entry, then choose **Restart** from ScrollFlip's menu and grant permission again:
-
-```sh
-tccutil reset Accessibility io.github.xinding33.scrollflip
-```
+Because these builds aren't signed with a Developer ID, macOS treats each upgrade as a new app. After `brew upgrade scrollflip`, choose **Restart** from ScrollFlip's menu and grant Accessibility access again when prompted.
 
 ### From source
 

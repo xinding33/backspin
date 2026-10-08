@@ -121,6 +121,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
 
         if !startTap() {
+            // Any existing Accessibility entry is for an older build (each unsigned build looks
+            // like a new app to macOS), and it blocks the prompt. Clear it so the prompt shows.
+            let reset = Process()
+            reset.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+            reset.arguments = ["reset", "Accessibility", agentLabel]
+            try? reset.run()
+            reset.waitUntilExit()
+
             // Prompt once, then keep retrying; the tap succeeds as soon as permission is granted.
             AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
             log("Waiting for Accessibility permission (System Settings > Privacy & Security > Accessibility)")
