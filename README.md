@@ -56,8 +56,8 @@ Homebrew:
 
 ```sh
 brew services stop scrollflip
-brew uninstall scrollflip
 tccutil reset Accessibility io.github.xinding33.scrollflip
+brew uninstall scrollflip
 ```
 
 From source:
