@@ -41,10 +41,14 @@ This builds a universal app, copies it to `~/Applications/ScrollFlip.app`, and s
 
 ## Menu
 
-- **Reverse Mouse Wheel**: pause or resume reversing (remembered across restarts)
+- **Reverse Mouse Wheel**: pause or resume reversing
+  - **Vertical**, **Horizontal**: choose which directions to reverse (both by default)
 - **Start at Login**: start ScrollFlip when you log in, and relaunch it if it crashes
+- **Hide Menu Bar Icon**: ScrollFlip keeps running without an icon. Open ScrollFlip again to bring the icon back.
 - **Log Scroll Events**: log every scroll event to `~/Library/Logs/ScrollFlip.log`, with whether it was flipped
 - **Show Log**, **Restart**, **Quit** (stays quit until you next log in or open it)
+
+Settings are remembered across restarts.
 
 ## Uninstall
 
