@@ -20,16 +20,15 @@ Requires macOS 13+. Both methods build ScrollFlip on your Mac, so there's no Gat
 
 ```sh
 brew install xinding33/tap/scrollflip
-brew services start scrollflip
+open "$(brew --prefix)/opt/scrollflip/ScrollFlip.app"
 ```
 
-Grant ScrollFlip Accessibility access when prompted (System Settings → Privacy & Security → Accessibility), and keep Natural scrolling on. It starts working as soon as permission is granted, and starts at login from then on.
+Grant ScrollFlip Accessibility access when prompted (System Settings → Privacy & Security → Accessibility), and keep Natural scrolling on. It starts working as soon as permission is granted. Then choose **Start at Login** from its menu bar icon.
 
-Because these builds aren't signed with a Developer ID, macOS treats each upgrade as a new app and asks for Accessibility permission again. After `brew upgrade scrollflip`, clear the old entry and restart:
+Because these builds aren't signed with a Developer ID, macOS treats each upgrade as a new app and asks for Accessibility permission again. After `brew upgrade scrollflip`, clear the old entry, then choose **Restart** from ScrollFlip's menu and grant permission again:
 
 ```sh
 tccutil reset Accessibility io.github.xinding33.scrollflip
-brew services restart scrollflip
 ```
 
 ### From source
@@ -42,20 +41,20 @@ cd scrollflip
 ./install.sh
 ```
 
-This builds a universal app, copies it to `~/Applications/ScrollFlip.app`, and registers a LaunchAgent so it starts at login (and relaunches if it crashes). `build.sh` signs with your Apple Development certificate if you have one, so the Accessibility permission survives rebuilds; otherwise it signs ad-hoc and you'll need to re-grant permission after each rebuild.
+This builds a universal app, copies it to `~/Applications/ScrollFlip.app`, and starts it with **Start at Login** turned on. `build.sh` signs with your Apple Development certificate if you have one, so the Accessibility permission survives rebuilds; otherwise it signs ad-hoc and you'll need to re-grant permission after each rebuild.
 
 ## Menu
 
 - **Reverse Mouse Wheel**: pause or resume reversing (remembered across restarts)
+- **Start at Login**: start ScrollFlip when you log in, and relaunch it if it crashes
 - **Log Scroll Events**: log every scroll event to `~/Library/Logs/ScrollFlip.log`, with whether it was flipped
-- **Show Log**, **Restart**, **Quit** (stays quit until next login)
+- **Show Log**, **Restart**, **Quit** (stays quit until you next log in or open it)
 
 ## Uninstall
 
-Homebrew:
+Homebrew: turn off **Start at Login** and quit ScrollFlip from its menu, then:
 
 ```sh
-brew services stop scrollflip
 tccutil reset Accessibility io.github.xinding33.scrollflip
 brew uninstall scrollflip
 ```
@@ -66,7 +65,11 @@ From source:
 ./uninstall.sh
 ```
 
-Stops the app, removes the LaunchAgent and app, and resets its Accessibility permission.
+Stops the app, turns off Start at Login, resets its Accessibility permission, and deletes the app.
+
+## AI disclosure
+
+ScrollFlip's implementation and documentation were developed with AI assistance.
 
 ## License
 

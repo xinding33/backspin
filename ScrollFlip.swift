@@ -14,7 +14,10 @@ var enabled = UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true
 var verbose = CommandLine.arguments.contains("--log")
 var tap: CFMachPort?
 
-let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/ScrollFlip.log")
+let home = FileManager.default.homeDirectoryForCurrentUser
+let logURL = home.appendingPathComponent("Library/Logs/ScrollFlip.log")
+let agentLabel = "io.github.xinding33.scrollflip"
+let agentURL = home.appendingPathComponent("Library/LaunchAgents/\(agentLabel).plist")
 let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
 
 let logFile: FileHandle? = {
@@ -71,6 +74,28 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
     return Unmanaged.passUnretained(event)
 }
 
+/// The executable path launchd should run. For Homebrew installs, use the
+/// version-independent opt/ path so it keeps working after upgrades.
+func stableExecutablePath() -> String {
+    Bundle.main.executablePath!.replacingOccurrences(
+        of: #"/Cellar/scrollflip/[^/]+/"#, with: "/opt/scrollflip/", options: .regularExpression)
+}
+
+/// Start at login is a LaunchAgent, which also relaunches ScrollFlip if it crashes.
+var startsAtLogin: Bool { FileManager.default.fileExists(atPath: agentURL.path) }
+
+func writeLaunchAgent() throws {
+    let plist: [String: Any] = [
+        "Label": agentLabel,
+        "ProgramArguments": [stableExecutablePath()],
+        "RunAtLoad": true,
+        "KeepAlive": ["SuccessfulExit": false],
+        "ProcessType": "Interactive",
+    ]
+    try FileManager.default.createDirectory(at: agentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: agentURL)
+}
+
 /// Creates the event tap. Fails until the app has Accessibility permission.
 func startTap() -> Bool {
     if tap != nil { return true }
@@ -125,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
         menu.addItem(item("Reverse Mouse Wheel", #selector(toggleEnabled), checked: enabled))
+        menu.addItem(item("Start at Login", #selector(toggleStartAtLogin), checked: startsAtLogin))
         menu.addItem(item("Log Scroll Events", #selector(toggleLogging), checked: verbose))
         menu.addItem(item("Show Log", #selector(showLog)))
         menu.addItem(.separator())
@@ -159,13 +185,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(accessibilitySettingsURL)
     }
 
+    @objc func toggleStartAtLogin() {
+        do {
+            if startsAtLogin {
+                try FileManager.default.removeItem(at: agentURL)
+            } else {
+                try writeLaunchAgent()
+            }
+            log("Start at login \(startsAtLogin ? "on" : "off")")
+        } catch {
+            log("Couldn't change start at login: \(error)")
+        }
+    }
+
     @objc func restart() {
         log("Restarting")
-        let path = Bundle.main.executablePath!
         var args = CommandLine.arguments.map { strdup($0) } + [nil]
-        execv(path, &args)
+        execv(stableExecutablePath(), &args)
     }
 }
+
+if CommandLine.arguments.contains("--install-launch-agent") {
+    // Used by install.sh to turn on Start at Login without launching the app.
+    try writeLaunchAgent()
+    exit(0)
+}
+
+// Only one copy may run, or the wheel would be flipped twice. O_CLOEXEC releases
+// the lock when Restart execs a fresh copy.
+let lockFD = open(NSTemporaryDirectory() + "\(agentLabel).lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+if flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
+    log("Another copy of ScrollFlip is already running")
+    exit(0)
+}
+
+// Keep the login item pointing at this copy if the app has moved.
+if startsAtLogin { try? writeLaunchAgent() }
 
 let app = NSApplication.shared
 let delegate = AppDelegate()

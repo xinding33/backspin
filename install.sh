@@ -1,6 +1,7 @@
 #!/bin/sh
-# Installs ScrollFlip to ~/Applications and starts it now and at every login.
-# It relaunches if it crashes, but stays quit if you choose Quit from its menu.
+# Installs ScrollFlip to ~/Applications and starts it now and at every login
+# (the "Start at Login" menu option). It relaunches if it crashes, but stays quit
+# if you choose Quit from its menu.
 set -eu
 cd "$(dirname "$0")"
 [ -d build/ScrollFlip.app ] || ./build.sh
@@ -15,30 +16,7 @@ mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
 rm -rf "$APP"
 cp -R build/ScrollFlip.app "$APP"
 
-cat > "$PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$LABEL</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$APP/Contents/MacOS/ScrollFlip</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
-    <key>ProcessType</key>
-    <string>Interactive</string>
-</dict>
-</plist>
-PLIST
-
+"$APP/Contents/MacOS/ScrollFlip" --install-launch-agent
 launchctl bootstrap "$DOMAIN" "$PLIST"
 echo "ScrollFlip installed and running. Grant it Accessibility access if prompted."
 echo "Log: ~/Library/Logs/ScrollFlip.log"
