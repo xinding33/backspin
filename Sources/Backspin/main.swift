@@ -24,6 +24,8 @@ let executablePath = Bundle.main.executablePath!
 let showIconNotification = Notification.Name("\(bundleID).showIcon")
 let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
 let scrollMask = CGEventMask(1 << CGEventType.scrollWheel.rawValue)
+let appVersion = Version(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") ?? Version("0.0.0")!
+var autoUpdate = defaults.object(forKey: "autoUpdate") as? Bool ?? true
 
 if CommandLine.arguments.contains("--diagnose") {
     // Read-only. The probe tap is removed before it's ever added to a run loop.
@@ -31,13 +33,14 @@ if CommandLine.arguments.contains("--diagnose") {
         tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
         eventsOfInterest: scrollMask, callback: { _, _, event, _ in Unmanaged.passUnretained(event) }, userInfo: nil)
     if let probe { CFMachPortInvalidate(probe) }
-    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "(no version)"
     let legacyRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: legacyBundleID).isEmpty
     print("""
-        Backspin \(version) at \(Bundle.main.bundlePath)
+        Backspin \(appVersion) at \(Bundle.main.bundlePath)
         Accessibility permission: \(AXIsProcessTrusted() ? "granted" : "not granted")
         Event tap: \(probe == nil ? "unavailable" : "available")
         Start at Login: \(agent.isInstalled ? "on" : "off")
+        Install Updates Automatically: \(autoUpdate ? "on" : "off")\
+        \(Updater.isDeveloperIDSigned(Bundle.main.bundleURL) ? "" : " (source build: can't update itself)")
         ScrollFlip: \(legacyRunning ? "running" : "not running"), \
         settings \(LegacyMigration.hasSettings(in: legacyBundleID, defaults) ? "present" : "absent"), \
         Start at Login \(legacyAgent.isInstalled ? "on" : "off")
@@ -145,6 +148,9 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
 
 var startsAtLogin: Bool { agent.isInstalled }
 
+// Only release builds can install releases: an update must be signed the same way.
+let canInstallUpdates = Updater.isDeveloperIDSigned(Bundle.main.bundleURL)
+
 /// Creates the event tap. Fails until the app has Accessibility permission.
 func startTap() -> Bool {
     if tap != nil { return true }
@@ -161,6 +167,8 @@ func startTap() -> Bool {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    /// What the updater is doing, or nil when it's idle.
+    var updateStatus: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = NSImage(systemSymbolName: "computermouse", accessibilityDescription: "Backspin")
@@ -191,6 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         updateIcon()
+
+        checkForUpdatesAutomatically()
+        Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in
+            self?.checkForUpdatesAutomatically()
+        }
     }
 
     /// Opening Backspin while it's running shows the icon again.
@@ -236,6 +249,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item("Start at Login", #selector(toggleStartAtLogin), checked: startsAtLogin))
         menu.addItem(item("Hide Menu Bar Icon…", #selector(hideIcon)))
+        menu.addItem(.separator())
+        let check = item(updateStatus ?? "Check for Updates…", #selector(checkForUpdates))
+        check.isEnabled = updateStatus == nil
+        menu.addItem(check)
+        let automatic = item("Install Updates Automatically", #selector(toggleAutoUpdate), checked: autoUpdate && canInstallUpdates)
+        automatic.isEnabled = canInstallUpdates
+        menu.addItem(automatic)
         menu.addItem(.separator())
         menu.addItem(item("Log Scroll Events", #selector(toggleLogging), checked: verbose))
         menu.addItem(item("Show Log", #selector(showLog)))
@@ -316,6 +336,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch {
             log("Couldn't change start at login: \(error)")
         }
+    }
+
+    @objc func toggleAutoUpdate() {
+        autoUpdate.toggle()
+        defaults.set(autoUpdate, forKey: "autoUpdate")
+        log("Install updates automatically \(autoUpdate ? "on" : "off")")
+        checkForUpdatesAutomatically()
+    }
+
+    /// When automatic updates are on, checks once a day and installs any newer release.
+    func checkForUpdatesAutomatically() {
+        let lastCheck = defaults.object(forKey: "lastUpdateCheck") as? Date ?? .distantPast
+        guard autoUpdate, canInstallUpdates, updateStatus == nil, Date().timeIntervalSince(lastCheck) > 24 * 60 * 60
+        else { return }
+        updateStatus = "Checking for Updates…"
+        Task { @MainActor in
+            defer { updateStatus = nil }
+            do {
+                if let release = try await newerRelease() { try await install(release) }
+            } catch {
+                log("Automatic update failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @objc func checkForUpdates() {
+        updateStatus = "Checking for Updates…"
+        Task { @MainActor in
+            defer { updateStatus = nil }
+            do {
+                let release = try await newerRelease()
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                guard let release else {
+                    alert.messageText = "Backspin is up to date"
+                    alert.informativeText = "Version \(appVersion) is the latest."
+                    alert.runModal()
+                    return
+                }
+                alert.messageText = "Backspin \(release.version) is available"
+                alert.informativeText = canInstallUpdates
+                    ? "You have version \(appVersion)."
+                    : "You have version \(appVersion). This copy was built from source, so it can't update itself."
+                if canInstallUpdates { alert.addButton(withTitle: "Install and Restart") }
+                alert.addButton(withTitle: "Release Notes")
+                alert.addButton(withTitle: "Later")
+                switch (alert.runModal(), canInstallUpdates) {
+                case (.alertFirstButtonReturn, true): try await install(release)
+                case (.alertFirstButtonReturn, false), (.alertSecondButtonReturn, true): NSWorkspace.shared.open(release.page)
+                default: break
+                }
+            } catch {
+                log("Update failed: \(error.localizedDescription)")
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert(error: error)
+                alert.messageText = "Couldn't update Backspin"
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+            }
+        }
+    }
+
+    /// The latest release, if it's newer than this copy.
+    @MainActor func newerRelease() async throws -> Release? {
+        let release = try await Updater.latestRelease()
+        defaults.set(Date(), forKey: "lastUpdateCheck")
+        return release.version > appVersion ? release : nil
+    }
+
+    /// Replaces this copy with `release` and restarts into it.
+    @MainActor func install(_ release: Release) async throws {
+        updateStatus = "Installing Backspin \(release.version)…"
+        log("Installing Backspin \(release.version)")
+        try await Updater.install(release, replacing: Bundle.main.bundleURL)
+        restart()
     }
 
     @objc func restart() {
