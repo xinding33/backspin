@@ -2,6 +2,9 @@
 # Writes the backspin cask for a release into a homebrew-tap checkout, and retires the
 # scrollflip formula (Backspin's name and source build before 1.3.0).
 # Usage: scripts/update-cask.sh TAP_DIR VERSION SHA256
+#
+# Backspin updates itself from 1.4.0, but the cask doesn't say `auto_updates true` yet: brew upgrade
+# would then skip Backspin, stranding 1.3.0, which can't update itself. Add it in a later release.
 set -euo pipefail
 TAP="$1" VERSION="$2" SHA="$3"
 mkdir -p "$TAP/Casks"

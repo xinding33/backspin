@@ -26,7 +26,11 @@ Or download `Backspin-x.y.z.zip` from the [latest release](https://github.com/xi
 
 Open Backspin and grant it Accessibility access when prompted (System Settings → Privacy & Security → Accessibility), and keep Natural scrolling on. It starts working as soon as permission is granted. Then choose **Start at Login** from its menu bar icon.
 
-The permission carries over to later versions, so you grant it once. `brew upgrade` quits Backspin and reopens it afterwards.
+The permission carries over to later versions, so you grant it once.
+
+### Updating
+
+Backspin updates itself: once a day it checks for a new [release](https://github.com/xinding33/backspin/releases), checks that it's signed by the same developer, replaces itself and restarts. To turn that off, uncheck **Install Updates Automatically** in its menu, and use **Check for Updates…** instead. `brew upgrade` also works: it quits Backspin and reopens it afterwards.
 
 ### Upgrading from ScrollFlip
 
@@ -46,6 +50,8 @@ brew uninstall scrollflip
   - **Vertical**, **Horizontal**: choose which directions to reverse (both by default)
 - **Start at Login**: start Backspin when you log in, and relaunch it if it crashes
 - **Hide Menu Bar Icon**: Backspin keeps running without an icon. Open Backspin again to bring the icon back.
+- **Check for Updates…**: see whether there's a newer release, and install it
+- **Install Updates Automatically**: check GitHub once a day and install new releases without asking (on by default)
 - **Log Scroll Events**: log every scroll event to `~/Library/Logs/Backspin.log`, with whether it was flipped
 - **Show Log**, **Restart**, **Quit** (stays quit until you next log in or open it)
 
@@ -78,7 +84,7 @@ cd backspin
 ./install.sh
 ```
 
-This builds a universal app, copies it to `~/Applications/Backspin.app`, and starts it with **Start at Login** turned on. `build.sh` signs with your Apple Development certificate if you have one, so the Accessibility permission survives rebuilds; otherwise it signs ad-hoc and you'll need to re-grant permission after each rebuild. `./uninstall.sh` stops the app, turns off Start at Login, resets its Accessibility permission, and deletes the app.
+This builds a universal app, copies it to `~/Applications/Backspin.app`, and starts it with **Start at Login** turned on. `build.sh` signs with your Apple Development certificate if you have one, so the Accessibility permission survives rebuilds; otherwise it signs ad-hoc and you'll need to re-grant permission after each rebuild. `./uninstall.sh` stops the app, turns off Start at Login, resets its Accessibility permission, and deletes the app. Builds you make yourself can't install releases from the menu, since they aren't signed by the same developer; pull and run `./install.sh` again to update.
 
 Run the tests with `swift test` (requires Xcode).
 
