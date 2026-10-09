@@ -1,4 +1,4 @@
-// ScrollFlip: reverses mouse-wheel scrolling while leaving trackpad scrolling alone.
+// Backspin: reverses mouse-wheel scrolling while leaving trackpad scrolling alone.
 //
 // Trackpads (and Magic Mouse) send "continuous" scroll events; notched mouse wheels
 // send discrete ones. We flip only the discrete events, so with system "Natural
@@ -8,21 +8,50 @@
 
 import AppKit
 import ApplicationServices
+import BackspinCore
+
+let bundleID = "io.github.xinding33.backspin"
+// Backspin was called ScrollFlip before 1.3.0.
+let legacyBundleID = "io.github.xinding33.scrollflip"
 
 let defaults = UserDefaults.standard
-var enabled = defaults.object(forKey: "enabled") as? Bool ?? true
-var reverseVertical = defaults.object(forKey: "reverseVertical") as? Bool ?? true
-var reverseHorizontal = defaults.object(forKey: "reverseHorizontal") as? Bool ?? true
-var iconHidden = defaults.bool(forKey: "iconHidden")
-var verbose = CommandLine.arguments.contains("--log")
-var tap: CFMachPort?
-
 let home = FileManager.default.homeDirectoryForCurrentUser
-let logURL = home.appendingPathComponent("Library/Logs/ScrollFlip.log")
-let agentLabel = "io.github.xinding33.scrollflip"
-let agentURL = home.appendingPathComponent("Library/LaunchAgents/\(agentLabel).plist")
-let showIconNotification = Notification.Name("\(agentLabel).showIcon")
+let logURL = home.appendingPathComponent("Library/Logs/Backspin.log")
+let legacyLogURL = home.appendingPathComponent("Library/Logs/ScrollFlip.log")
+let agent = LaunchAgent(label: bundleID, directory: home.appendingPathComponent("Library/LaunchAgents"))
+let legacyAgent = LaunchAgent(label: legacyBundleID, directory: home.appendingPathComponent("Library/LaunchAgents"))
+let executablePath = Bundle.main.executablePath!
+let showIconNotification = Notification.Name("\(bundleID).showIcon")
 let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+let scrollMask = CGEventMask(1 << CGEventType.scrollWheel.rawValue)
+
+if CommandLine.arguments.contains("--diagnose") {
+    // Read-only. The probe tap is removed before it's ever added to a run loop.
+    let probe = CGEvent.tapCreate(
+        tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+        eventsOfInterest: scrollMask, callback: { _, _, event, _ in Unmanaged.passUnretained(event) }, userInfo: nil)
+    if let probe { CFMachPortInvalidate(probe) }
+    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "(no version)"
+    let legacyRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: legacyBundleID).isEmpty
+    print("""
+        Backspin \(version) at \(Bundle.main.bundlePath)
+        Accessibility permission: \(AXIsProcessTrusted() ? "granted" : "not granted")
+        Event tap: \(probe == nil ? "unavailable" : "available")
+        Start at Login: \(agent.isInstalled ? "on" : "off")
+        ScrollFlip: \(legacyRunning ? "running" : "not running"), \
+        settings \(LegacyMigration.hasSettings(in: legacyBundleID, defaults) ? "present" : "absent"), \
+        Start at Login \(legacyAgent.isInstalled ? "on" : "off")
+        """)
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--install-launch-agent") {
+    // Used by install.sh to turn on Start at Login without launching the app.
+    try agent.install(executable: executablePath)
+    exit(0)
+}
+
+LegacyMigration.moveLog(from: legacyLogURL, to: logURL)
 
 // O_APPEND so a second copy's lines (e.g. "already running") don't get overwritten.
 let logFile: FileHandle? = {
@@ -31,32 +60,68 @@ let logFile: FileHandle? = {
 }()
 let timestamp = ISO8601DateFormatter()
 
-/// Appends to ~/Library/Logs/ScrollFlip.log, and echoes to the terminal when run from one.
+/// Appends to ~/Library/Logs/Backspin.log, and echoes to the terminal when run from one.
 func log(_ message: String) {
     let line = "\(timestamp.string(from: Date())) \(message)\n".data(using: .utf8)!
     logFile?.write(line)
     if isatty(STDERR_FILENO) != 0 { FileHandle.standardError.write(line) }
 }
 
-/// Negates the vertical (axis 1) and/or horizontal (axis 2) scroll deltas.
-func flip(_ event: CGEvent, vertical: Bool, horizontal: Bool) {
-    // Read everything first: setting the line delta makes the system recompute the others.
-    let line1 = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
-    let line2 = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
-    let fixed1 = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
-    let fixed2 = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2)
-    let point1 = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1)
-    let point2 = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2)
-    let sign1: Int64 = vertical ? -1 : 1
-    let sign2: Int64 = horizontal ? -1 : 1
-
-    event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: sign1 * line1)
-    event.setIntegerValueField(.scrollWheelEventDeltaAxis2, value: sign2 * line2)
-    event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: Double(sign1) * fixed1)
-    event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: Double(sign2) * fixed2)
-    event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: sign1 * point1)
-    event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: sign2 * point2)
+/// Runs a command line tool and waits for it, discarding its output.
+func run(_ path: String, _ arguments: String...) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: path)
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try? process.run()
+    process.waitUntilExit()
 }
+
+// Only one copy may run, or the wheel would be flipped twice. O_CLOEXEC releases
+// the lock when Restart execs a fresh copy.
+let lockFD = open(NSTemporaryDirectory() + "\(bundleID).lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+if flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
+    // Opening Backspin again is how you bring back a hidden icon.
+    DistributedNotificationCenter.default().postNotificationName(
+        showIconNotification, object: nil, userInfo: nil, deliverImmediately: true)
+    log("Another copy of Backspin is already running")
+    exit(0)
+}
+
+/// Quits a running ScrollFlip, which would flip the wheel back, and takes over its settings
+/// and Start at Login. Does nothing once ScrollFlip is gone.
+func migrateFromScrollFlip() {
+    let pids = NSRunningApplication.runningApplications(withBundleIdentifier: legacyBundleID).map(\.processIdentifier)
+    guard !pids.isEmpty || legacyAgent.isInstalled || LegacyMigration.hasSettings(in: legacyBundleID, defaults)
+    else { return }
+    log("Taking over from ScrollFlip")
+
+    // Unload its login item first, or launchd would relaunch it.
+    run("/bin/launchctl", "bootout", "gui/\(getuid())/\(legacyBundleID)")
+    pids.forEach { kill($0, SIGTERM) }
+    let deadline = Date().addingTimeInterval(5)
+    while pids.contains(where: { kill($0, 0) == 0 }) && Date() < deadline { usleep(100_000) }
+    pids.filter { kill($0, 0) == 0 }.forEach { kill($0, SIGKILL) }
+    // Remove its entry from the Accessibility list.
+    run("/usr/bin/tccutil", "reset", "Accessibility", legacyBundleID)
+
+    LegacyMigration.moveSettings(from: legacyBundleID, to: defaults)
+    do {
+        try LegacyMigration.moveLaunchAgent(from: legacyAgent, to: agent, executable: executablePath)
+    } catch {
+        log("Couldn't move Start at Login over from ScrollFlip: \(error)")
+    }
+}
+
+migrateFromScrollFlip()
+
+var enabled = defaults.object(forKey: "enabled") as? Bool ?? true
+var reverseVertical = defaults.object(forKey: "reverseVertical") as? Bool ?? true
+var reverseHorizontal = defaults.object(forKey: "reverseHorizontal") as? Bool ?? true
+var iconHidden = defaults.bool(forKey: "iconHidden")
+var verbose = CommandLine.arguments.contains("--log")
+var tap: CFMachPort?
 
 let callback: CGEventTapCallBack = { _, type, event, _ in
     switch type {
@@ -78,44 +143,19 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
     return Unmanaged.passUnretained(event)
 }
 
-/// The app's path for launchd and the user. For Homebrew installs, use the
-/// version-independent opt/ path so it keeps working after upgrades.
-func stableBundlePath() -> String {
-    Bundle.main.bundlePath.replacingOccurrences(
-        of: #"/Cellar/scrollflip/[^/]+/"#, with: "/opt/scrollflip/", options: .regularExpression)
-}
-
-func stableExecutablePath() -> String {
-    stableBundlePath() + "/Contents/MacOS/ScrollFlip"
-}
-
-/// Start at login is a LaunchAgent, which also relaunches ScrollFlip if it crashes.
-var startsAtLogin: Bool { FileManager.default.fileExists(atPath: agentURL.path) }
-
-func writeLaunchAgent() throws {
-    let plist: [String: Any] = [
-        "Label": agentLabel,
-        "ProgramArguments": [stableExecutablePath()],
-        "RunAtLoad": true,
-        "KeepAlive": ["SuccessfulExit": false],
-        "ProcessType": "Interactive",
-    ]
-    try FileManager.default.createDirectory(at: agentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: agentURL)
-}
+var startsAtLogin: Bool { agent.isInstalled }
 
 /// Creates the event tap. Fails until the app has Accessibility permission.
 func startTap() -> Bool {
     if tap != nil { return true }
-    let mask = CGEventMask(1 << CGEventType.scrollWheel.rawValue)
     guard let newTap = CGEvent.tapCreate(
         tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-        eventsOfInterest: mask, callback: callback, userInfo: nil
+        eventsOfInterest: scrollMask, callback: callback, userInfo: nil
     ) else { return false }
     tap = newTap
     CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, newTap, 0), .commonModes)
     CGEvent.tapEnable(tap: newTap, enable: true)
-    log("ScrollFlip running")
+    log("Backspin running")
     return true
 }
 
@@ -123,26 +163,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem.button?.image = NSImage(systemSymbolName: "computermouse", accessibilityDescription: "ScrollFlip")
+        statusItem.button?.image = NSImage(systemSymbolName: "computermouse", accessibilityDescription: "Backspin")
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
 
         // Started by our login item: honor Hide Menu Bar Icon. Opened by the user: show it.
-        let startedAtLogin = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == agentLabel
+        let startedAtLogin = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == agent.label
         if !startedAtLogin { setIconHidden(false) }
         DistributedNotificationCenter.default().addObserver(
             forName: showIconNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.setIconHidden(false) }
 
         if !startTap() {
-            // Any existing Accessibility entry is for an older build (each unsigned build looks
-            // like a new app to macOS), and it blocks the prompt. Clear it so the prompt shows.
-            let reset = Process()
-            reset.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
-            reset.arguments = ["reset", "Accessibility", agentLabel]
-            try? reset.run()
-            reset.waitUntilExit()
+            // An existing Accessibility entry for a differently signed copy (such as an ad-hoc
+            // source build) blocks the prompt. Clear it so the prompt shows.
+            run("/usr/bin/tccutil", "reset", "Accessibility", bundleID)
 
             // Prompt once, then keep retrying; the tap succeeds as soon as permission is granted.
             AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
@@ -157,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateIcon()
     }
 
-    /// Opening ScrollFlip while it's running shows the icon again.
+    /// Opening Backspin while it's running shows the icon again.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         setIconHidden(false)
         return false
@@ -184,7 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item("Open Accessibility Settings…", #selector(openAccessibilitySettings)))
         } else {
             let status = enabled ? "Reversing mouse wheel" : "Paused"
-            menu.addItem(label("ScrollFlip: \(status)"))
+            menu.addItem(label("Backspin: \(status)"))
         }
         menu.addItem(.separator())
         menu.addItem(item("Reverse Mouse Wheel", #selector(toggleEnabled), checked: enabled))
@@ -205,7 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("Show Log", #selector(showLog)))
         menu.addItem(.separator())
         menu.addItem(item("Restart", #selector(restart)))
-        menu.addItem(item("Quit ScrollFlip", #selector(NSApplication.terminate(_:)), key: "q", target: NSApp))
+        menu.addItem(item("Quit Backspin", #selector(NSApplication.terminate(_:)), key: "q", target: NSApp))
     }
 
     private func label(_ title: String) -> NSMenuItem {
@@ -243,11 +279,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func hideIcon() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Hide the ScrollFlip menu bar icon?"
+        alert.messageText = "Hide the Backspin menu bar icon?"
         alert.informativeText = """
-            ScrollFlip keeps running. To show the icon again, open ScrollFlip again:
+            Backspin keeps running. To show the icon again, open Backspin again:
 
-            open "\(stableBundlePath())"
+            open "\(Bundle.main.bundlePath)"
             """
         alert.addButton(withTitle: "Hide Icon")
         alert.addButton(withTitle: "Cancel")
@@ -272,9 +308,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleStartAtLogin() {
         do {
             if startsAtLogin {
-                try FileManager.default.removeItem(at: agentURL)
+                try agent.remove()
             } else {
-                try writeLaunchAgent()
+                try agent.install(executable: executablePath)
             }
             log("Start at login \(startsAtLogin ? "on" : "off")")
         } catch {
@@ -285,29 +321,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func restart() {
         log("Restarting")
         var args = CommandLine.arguments.map { strdup($0) } + [nil]
-        execv(stableExecutablePath(), &args)
+        execv(executablePath, &args)
     }
 }
 
-if CommandLine.arguments.contains("--install-launch-agent") {
-    // Used by install.sh to turn on Start at Login without launching the app.
-    try writeLaunchAgent()
-    exit(0)
-}
-
-// Only one copy may run, or the wheel would be flipped twice. O_CLOEXEC releases
-// the lock when Restart execs a fresh copy.
-let lockFD = open(NSTemporaryDirectory() + "\(agentLabel).lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-if flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
-    // Opening ScrollFlip again is how you bring back a hidden icon.
-    DistributedNotificationCenter.default().postNotificationName(
-        showIconNotification, object: nil, userInfo: nil, deliverImmediately: true)
-    log("Another copy of ScrollFlip is already running")
-    exit(0)
-}
-
 // Keep the login item pointing at this copy if the app has moved.
-if startsAtLogin { try? writeLaunchAgent() }
+if startsAtLogin { try? agent.install(executable: executablePath) }
 
 let app = NSApplication.shared
 let delegate = AppDelegate()
