@@ -81,8 +81,9 @@ func run(_ path: String, _ arguments: String...) {
     process.waitUntilExit()
 }
 
-// Only one copy may run, or the wheel would be flipped twice. O_CLOEXEC releases
-// the lock when Restart execs a fresh copy.
+// Only one copy may run, or the wheel would be flipped twice. Restart starts the new
+// copy once this one has exited and released the lock. O_CLOEXEC keeps the lock out of
+// child processes, such as the one Restart leaves behind to open the new copy.
 let lockFD = open(NSTemporaryDirectory() + "\(bundleID).lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
 if flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
     // Opening Backspin again is how you bring back a hidden icon.
@@ -415,8 +416,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func restart() {
         log("Restarting")
-        var args = CommandLine.arguments.map { strdup($0) } + [nil]
-        execv(executablePath, &args)
+        let reason = Relaunch.now(agentLabel: agent.label)
+        log("Couldn't restart: \(reason)")
     }
 }
 
